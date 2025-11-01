@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Market Watch • Tweet Composer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style> /* small local tweaks */
+    .card{background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);}
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col">
+  <div class="container mx-auto max-w-2xl p-6 flex-1">
+    <!-- header -->
+    <header class="flex items-start justify-between gap-4 mb-6">
+      <div>
+        <h1 class="text-3xl font-extrabold">Market Watch</h1>
+        <p class="text-sm text-slate-400">Live price peek • tweet composer • dark mode</p>
+      </div>
+      <img src="https://images.unsplash.com/photo-1612832020531-7d6aed7245d6?q=80&w=400&auto=format&fit=crop&ixlib=rb-4.0.3&s=5f4af7d2b0b3f0420f0f3b446f0b4aef" alt="decor" class="w-16 h-16 rounded-lg object-cover border border-slate-700 shadow-md" />
+    </header>
+
+    <!-- main card -->
+    <main class="card border border-slate-700 rounded-2xl p-5 shadow-lg">
+      <div class="grid grid-cols-2 gap-6">
+        <section class="col-span-2 md:col-span-1">
+          <label class="text-xs text-slate-400">Asset type</label>
+          <select id="assetType" class="mt-2 w-full rounded-md p-2 bg-slate-800 border border-slate-700">
+            <option value="crypto">Crypto</option>
+            <option value="stock">Stock</option>
+          </select>
+
+          <label class="text-xs text-slate-400 mt-3 block">Symbol</label>
+          <input id="symbol" placeholder="BTC, ETH, AAPL" class="mt-2 w-full rounded-md p-2 bg-slate-800 border border-slate-700" />
+
+          <div class="mt-3">
+            <label class="text-xs text-slate-400">Proxy (optional, helps with CORS)</label>
+            <input id="proxyUrl" placeholder="https://api.allorigins.win/raw?url=" class="mt-2 w-full rounded-md p-2 bg-slate-800 border border-slate-700" />
+            <label class="mt-2 inline-flex items-center gap-2 text-sm text-slate-400"><input type="checkbox" id="useProxy" /> Use proxy</label>
+          </div>
+
+          <div class="mt-4 flex gap-2">
+            <button id="fetchBtn" class="flex-1 bg-indigo-600 hover:bg-indigo-700 rounded-md py-2 font-semibold">Fetch price</button>
+            <button id="clearBtn" class="bg-slate-700 hover:bg-slate-600 rounded-md px-4">Clear</button>
+          </div>
+
+          <div id="priceBox" class="mt-4 p-3 rounded-md border border-slate-700 bg-slate-900 text-center">
+            <div id="priceDisplay" class="text-xl font-bold">—</div>
+            <div id="priceChange" class="text-sm text-slate-400 mt-1">No data</div>
+            <div id="prevDisplay" class="text-xs text-slate-500 mt-1">Previous stored: —</div>
+          </div>
+
+          <div class="mt-3 text-xs text-slate-400">If you get <strong>"Failed to fetch"</strong>, enable proxy and set the proxy URL to <code>https://api.allorigins.win/raw?url=</code> then retry.</div>
+        </section>
+
+        <section class="col-span-2 md:col-span-1">
+          <label class="text-xs text-slate-400">Tweet template</label>
+          <textarea id="tweetTpl" rows="4" class="mt-2 w-full rounded-md p-2 bg-slate-800 border border-slate-700">$ASSET $DIRECTION — $PRICE ($CHANGE)</textarea>
+
+          <div class="mt-3 flex gap-2">
+            <button id="buildBtn" class="flex-1 bg-emerald-600 hover:bg-emerald-700 rounded-md py-2 font-semibold">Build Tweet</button>
+            <button id="copyBtn" class="bg-slate-700 rounded-md px-4">Copy</button>
+          </div>
+
+          <textarea id="tweetOut" readonly rows="3" class="mt-3 w-full rounded-md p-2 bg-slate-900 border border-slate-700"></textarea>
+
+          <div class="mt-3 flex gap-2">
+            <button id="postBtn" class="flex-1 bg-black hover:bg-slate-900 text-white rounded-md py-2">Open on X</button>
+            <button id="mockBtn" class="bg-slate-700 rounded-md px-4">Mock</button>
+          </div>
+
+          <div id="status" class="mt-3 text-sm text-slate-400">Status: idle</div>
+          <div id="errorBox" class="mt-2 text-sm text-red-400 hidden"></div>
+        </section>
+      </div>
+
+      <!-- tests area (always present) -->
+      <div class="mt-6 border-t border-slate-700 pt-4 text-sm text-slate-400">
+        <div class="flex gap-2">
+          <button id="testBTC" class="px-3 py-1 bg-blue-800 rounded-md">Test BTC</button>
+          <button id="testAAPL" class="px-3 py-1 bg-slate-800 rounded-md">Test AAPL</button>
+          <button id="testETH" class="px-3 py-1 bg-yellow-800 rounded-md">Test ETH</button>
+          <button id="testTSLA" class="px-3 py-1 bg-red-800 rounded-md">Test TSLA</button>
+        </div>
+        <p class="mt-3 text-xs text-slate-500">Tests load deterministic mock data (no network) so you can verify behavior in sandboxed environments.</p>
+      </div>
+    </main>
+
+    <footer class="mt-6 text-center text-xs text-slate-500">Made with ❤️ — need automation? ask for OAuth/X integration</footer>
+  </div>
+
+<script>
+// --- Utilities ---
+const $ = id => document.getElementById(id);
+function setStatus(s){ $('status').textContent = 'Status: ' + s }
+function showError(msg){ const e=$('errorBox'); e.textContent=msg; e.classList.remove('hidden'); setTimeout(()=>e.classList.add('hidden'),6000) }
+function savePrev(sym, price){ try{ localStorage.setItem('last_price_'+sym, String(price)); }catch(e){} }
+function getPrev(sym){ try{ const v=localStorage.getItem('last_price_'+sym); return v===null?null:parseFloat(v) }catch(e){ return null } }
+
+// Fetch wrapper with auto-proxy fallback list
+async function fetchJsonWithFallback(url, proxyOpt){
+  // try direct
+  try{ const res = await fetch(url); if (!res.ok) throw new Error('HTTP '+res.status); return await res.json(); }
+  catch(err){
+    // if proxy explicitly disabled, rethrow
+    const proxies = [];
+    if (proxyOpt && proxyOpt.trim()) proxies.push(proxyOpt.trim());
+    // useful public proxies to try (best-effort)
+    proxies.push('https://api.allorigins.win/raw?url=');
+    proxies.push('https://api.codetabs.cc/v1/proxy?quest=');
+    for (let p of proxies){
+      try{
+        const prox = p + encodeURIComponent(url);
+        const r = await fetch(prox);
+        if (!r.ok) throw new Error('Proxy HTTP '+r.status);
+        return await r.json();
+      }catch(e){ /* try next */ }
+    }
+    // if nothing worked, throw original error
+    throw new Error('Failed to fetch (direct and proxy attempts failed). ' + (err && err.message));
+  }
+}
+
+// --- Data fetchers ---
+async function fetchCryptoPrice(symbol, proxy){
+  const idMap = { btc: 'bitcoin', eth: 'ethereum' };
+  const id = idMap[symbol.toLowerCase()] || symbol.toLowerCase();
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(id)}&vs_currencies=usd&include_24hr_change=true`;
+  const json = await fetchJsonWithFallback(url, proxy);
+  const data = json[id];
+  if (!data || data.usd === undefined) throw new Error('Coin not found');
+  return { price: Number(data.usd), changePct: data.usd_24h_change ? Number(data.usd_24h_change) : null };
+}
+
+async function fetchStockPrice(symbol, proxy){
+  // Use Yahoo Finance chart API (gives prev close + current)
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1m`;
+  const json = await fetchJsonWithFallback(url, proxy);
+  const result = json.chart && json.chart.result && json.chart.result[0];
+  if (!result) throw new Error('Stock not found');
+  const meta = result.meta || {};
+  const price = meta.regularMarketPrice ?? (result.indicators && result.indicators.quote && result.indicators.quote[0] && result.indicators.quote[0].close && result.indicators.quote[0].close.slice(-1)[0]);
+  const prevClose = meta.previousClose ?? null;
+  const changePct = (price !== null && prevClose !== null) ? ((price - prevClose)/prevClose*100) : null;
+  return { price: Number(price), prevClose: Number(prevClose), changePct: changePct };
+}
+
+// --- UI logic ---
+async function doFetch(){
+  setStatus('Fetching');
+  $('priceDisplay').textContent = '...';
+  $('priceChange').textContent = '';
+  try{
+    const sym = ($('symbol').value || '').trim();
+    if (!sym) { showError('Enter a symbol'); setStatus('idle'); return }
+    const proxyVal = $('useProxy').checked ? ($('proxyUrl').value || '').trim() : '';
+
+    if ($('assetType').value === 'crypto'){
+      const { price, changePct } = await fetchCryptoPrice(sym, proxyVal);
+      const prev = getPrev(sym.toUpperCase()) ?? getPrev(sym.toLowerCase());
+      savePrev(sym.toUpperCase(), price);
+      const changeText = (changePct !== null && changePct !== undefined) ? (changePct >= 0 ? '+' : '') + changePct.toFixed(2) + '%' : 'N/A';
+      const absChange = (prev !== null) ? (price - prev).toFixed(2) : '—';
+      $('priceDisplay').textContent = '$' + Number(price).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:8});
+      $('priceChange').textContent = (prev!==null) ? `${absChange} (${changeText})` : `24h ${changeText}`;
+      $('prevDisplay').textContent = 'Previous stored: ' + (prev!==null ? ('$'+prev.toFixed(2)) : '—');
+      // color
+      $('priceDisplay').className = price > (prev||0) ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold';
+    } else {
+      const { price, prevClose, changePct } = await fetchStockPrice(sym, proxyVal);
+      savePrev(sym.toUpperCase(), price);
+      const changeText = (changePct !== null && changePct !== undefined) ? (changePct >= 0 ? '+' : '') + changePct.toFixed(2) + '%' : 'N/A';
+      const absChange = (prevClose !== null) ? (price - prevClose).toFixed(2) : '—';
+      $('priceDisplay').textContent = '$' + Number(price).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+      $('priceChange').textContent = `${absChange} (${changeText}) vs prev close $${Number(prevClose).toFixed(2)}`;
+      $('prevDisplay').textContent = 'Previous stored: ' + (getPrev(sym.toUpperCase()) ? ('$'+getPrev(sym.toUpperCase()).toFixed(2)) : '—');
+      $('priceDisplay').className = price > prevClose ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold';
+    }
+
+    setStatus('Fetched');
+  }catch(err){
+    console.error(err);
+    showError(err.message || 'Fetch failed');
+    setStatus('error');
+  }
+}
+
+function buildTweet(){
+  const tpl = ($('tweetTpl').value || '').trim();
+  const sym = ($('symbol').value || '').trim().toUpperCase();
+  if (!sym) return showError('Symbol required');
+  const priceText = $('priceDisplay').textContent || '';
+  if (!priceText || priceText === '...') return showError('Fetch price first');
+  const priceMatch = priceText.match(/\$([0-9.,]+)/);
+  const price = priceMatch ? priceMatch[1] : '';
+  const change = $('priceChange').textContent || '';
+  const direction = (change && change.includes('-')) ? 'gone down' : 'gone up';
+  const out = tpl.replace(/\$ASSET/g, sym).replace(/\$DIRECTION/g, direction).replace(/\$PRICE/g, price ? ('$'+price) : '').replace(/\$CHANGE/g, change);
+  $('tweetOut').value = out;
+  setStatus('Built');
+}
+
+async function copyTweet(){
+  const txt = $('tweetOut').value || '';
+  if (!txt) return showError('Nothing to copy');
+  setStatus('Copying');
+  try{
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(txt);
+      setStatus('Copied');
+      return;
+    }
+  }catch(e){ console.warn('clipboard failed', e); }
+  // fallback
+  try{
+    const ta = document.createElement('textarea'); ta.value = txt; ta.style.position='fixed'; ta.style.left='-9999px'; document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand && document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (ok){ setStatus('Copied (fallback)'); return; }
+  }catch(e){ /* ignore */ }
+  // final fallback: prompt
+  prompt('Copy the text below (Ctrl/Cmd+C):', txt);
+  setStatus('Manual copy');
+}
+
+// wire buttons
+$('fetchBtn').addEventListener('click', doFetch);
+$('clearBtn').addEventListener('click', ()=>{ const s=($('symbol').value||'').trim(); if(s) { localStorage.removeItem('last_price_'+s); $('priceDisplay').textContent='—'; $('priceChange').textContent=''; $('prevDisplay').textContent='Previous stored: —'; setStatus('Cleared'); } });
+$('buildBtn').addEventListener('click', buildTweet);
+$('copyBtn').addEventListener('click', copyTweet);
+$('postBtn').addEventListener('click', ()=>{ const t=$('tweetOut').value||''; if(!t) return showError('Build first'); window.open('https://x.com/intent/tweet?text='+encodeURIComponent(t),'_blank') });
+$('mockBtn').addEventListener('click', ()=>{
+  // load deterministic mocks for testing
+  const sym = 'MOCK'; $('symbol').value = sym; $('assetType').value = 'crypto';
+  $('priceDisplay').textContent = '$123.45';
+  $('priceChange').textContent = '+1.23%';
+  $('prevDisplay').textContent = 'Previous stored: $122.00';
+  $('tweetOut').value = '$MOCK up — $123.45 (+1.23%)';
+  setStatus('Mock loaded');
+});
+
+// test cases
+$('testBTC').addEventListener('click', ()=>{ $('assetType').value='crypto'; $('symbol').value='BTC'; $('mockBtn').click(); });
+$('testETH').addEventListener('click', ()=>{ $('assetType').value='crypto'; $('symbol').value='ETH'; $('mockBtn').click(); });
+$('testAAPL').addEventListener('click', ()=>{ $('assetType').value='stock'; $('symbol').value='AAPL'; $('mockBtn').click(); });
+$('testTSLA').addEventListener('click', ()=>{ $('assetType').value='stock'; $('symbol').value='TSLA'; $('mockBtn').click(); });
+
+console.log('Market Watch loaded — if a fetch fails with CORS, enable proxy and try allorigins proxy URL.');
+</script>
+</body>
+</html>
